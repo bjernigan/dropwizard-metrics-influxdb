@@ -108,6 +108,13 @@ are for out-of-the-box Dropwizard metrics as well as the
 [recommended](http://www.dropwizard.io/manual/core.html#organizing-your-project)
 Dropwizard project layout.
 
+### Tags
+
+Tags for a metric are created by a class implementing the `Transform` interface
+configured by `tagsTransformer`. By default the `ClassBasedTransformer` is used
+and it creates tha following tags: `metricName`, `package`, `className`, and
+`method`.
+
 ### Gauge Grouping
 
 Gauge grouping is enabled by default. This will turn a set of metrics into a
@@ -153,16 +160,32 @@ We default to only report the median (p50), the 99th percentile and the 1m rate
 for timers, and just the 1m rate for meters. Since we report every minute the 5
 and 15 minute rates can be calculated from the 1 minute rate.
 
+## Sender Types
+
+This library can send metrics to InfluxDB directly with `http` (default),
+ `tcp`, or `udp`. In addition to these metrics can also be sent the apps
+logging facility using `logger` or to a Kafka topic, see below.
+
+### Kafka
+
+Metrics can be passed via Kafka by using the `kafka` sender type. Example config:
+
+```
+senderType: kafka
+database: topic@broker1:9092,broker2:9092
+```
+
 ## All Defaults
 
 ```yaml
+senderType: http
 protocol: http
 host: localhost
 port: 8086
 tags: {} # global tags, e.g. environment or host
-# only push the median (p50), the 99th percentile and the 1m rate
+# push median (p50), some percentiles and the 1m rate
 fields:
-  timers: [p50, p99, m1_rate]
+  timers: [p50, p75, p95, p99, p999, m1_rate]
   meters: [m1_rate]
 groupGauges: yes
 # exclude some pre-calculated metrics
@@ -216,4 +239,6 @@ durationUnit: MILLISECONDS
 rateUnit: SECONDS
 # default inherited from MetricsFactory
 frequency: 1m
+tagsTransformer:
+  type: ClassBased # default
 ```

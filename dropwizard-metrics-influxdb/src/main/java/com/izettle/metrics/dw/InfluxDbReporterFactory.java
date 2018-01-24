@@ -1,5 +1,17 @@
 package com.izettle.metrics.dw;
 
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
+
+import javax.activation.UnsupportedDataTypeException;
+import javax.validation.constraints.NotNull;
+
+import org.hibernate.validator.constraints.NotEmpty;
+import org.hibernate.validator.constraints.Range;
+
 import com.codahale.metrics.MetricRegistry;
 import com.codahale.metrics.ScheduledReporter;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -7,21 +19,17 @@ import com.fasterxml.jackson.annotation.JsonTypeName;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.izettle.metrics.influxdb.InfluxDBKafkaSender;
 import com.izettle.metrics.influxdb.InfluxDbHttpSender;
+import com.izettle.metrics.influxdb.InfluxDbLoggerSender;
 import com.izettle.metrics.influxdb.InfluxDbReporter;
 import com.izettle.metrics.influxdb.InfluxDbTcpSender;
 import com.izettle.metrics.influxdb.InfluxDbUdpSender;
+import com.izettle.metrics.dw.tags.ClassBasedTransformer;
+import com.izettle.metrics.dw.tags.Transformer;
 import io.dropwizard.metrics.BaseReporterFactory;
 import io.dropwizard.util.Duration;
 import io.dropwizard.validation.ValidationMethod;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.regex.Pattern;
-import java.util.regex.PatternSyntaxException;
-import javax.activation.UnsupportedDataTypeException;
-import javax.validation.constraints.NotNull;
-import org.hibernate.validator.constraints.NotEmpty;
-import org.hibernate.validator.constraints.Range;
 
 /**
  * A factory for {@link InfluxDbReporter} instances.
@@ -32,6 +40,11 @@ import org.hibernate.validator.constraints.Range;
  *         <td>Name</td>
  *         <td>Default</td>
  *         <td>Description</td>
+ *     </tr>
+ *     <tr>
+ *         <td>senderType</td>
+ *         <td>http</td>
+ *         <td>The sender type (http, tcp, udp, logger, or kafka) used to send metrics to the InfluxDb server.</td>
  *     </tr>
  *     <tr>
  *         <td>protocol</td>
@@ -60,7 +73,7 @@ import org.hibernate.validator.constraints.Range;
  *     </tr>
  *     <tr>
  *         <td>fields</td>
- *         <td>timers = p50, p99, m1_rate<br>meters = m1_rate</td>
+ *         <td>timers = p50, p75, p95, p99, p999, m1_rate<br>meters = m1_rate</td>
  *         <td>fields by metric type to reported to InfluxDb.</td>
  *     </tr>
  *     <tr>
@@ -130,6 +143,12 @@ import org.hibernate.validator.constraints.Range;
  *         <td>A set of pre-calculated metrics like usage and percentage, and unchanging JVM
  *             metrics to exclude by default</td>
  *     </tr>
+ *     <tr>
+ *         <td>tagsTransformer</td>
+ *         <td><i>ClassBased</i></tr>
+ *         <td>A <code>JsonTypeName</code> for a class implementing the
+ *         <code>com.izettle.metrics.dw.tags.Transformer</code> interface.</td>
+ *     </tr>
  * </table>
  */
 @JsonTypeName("influxdb")
@@ -152,7 +171,7 @@ public class InfluxDbReporterFactory extends BaseReporterFactory {
     @NotEmpty
     private ImmutableMap<String, ImmutableSet<String>> fields = ImmutableMap.of(
         "timers",
-        ImmutableSet.of("p50", "p99", "m1_rate"),
+        ImmutableSet.of("p50", "p75", "p95", "p99", "p999", "m1_rate"),
         "meters",
         ImmutableSet.of("m1_rate"));
 
@@ -221,6 +240,9 @@ public class InfluxDbReporterFactory extends BaseReporterFactory {
         .add("jvm.memory.pools.PS-Old-Gen.usage")
         .add("jvm.memory.pools.PS-Survivor-Space.usage")
         .build();
+
+    @NotNull
+    private Transformer tagsTransformer = new ClassBasedTransformer();
 
     @JsonProperty
     public String getProtocol() {
@@ -384,10 +406,21 @@ public class InfluxDbReporterFactory extends BaseReporterFactory {
         return senderType;
     }
 
+    @JsonProperty
+    public void setTagsTransformer(Transformer tagsTransformer) {
+        this.tagsTransformer = tagsTransformer;
+    }
+
+    @JsonProperty
+    public Transformer getTagsTransformer() {
+        return tagsTransformer;
+    }
+
     @Override
     public ScheduledReporter build(MetricRegistry registry) {
         try {
             InfluxDbReporter.Builder builder = builder(registry);
+
             switch (senderType) {
                 case HTTP:
                     return builder.build(
@@ -423,6 +456,22 @@ public class InfluxDbReporterFactory extends BaseReporterFactory {
                             prefix
                         )
                     );
+                case LOGGER:
+                    return builder.build(
+                        new InfluxDbLoggerSender(
+                            database,
+                            TimeUnit.MILLISECONDS,
+                            prefix
+                        )
+                    );
+                case KAFKA:
+                        return builder.build(
+                        new InfluxDBKafkaSender(
+                            database,
+                            TimeUnit.MILLISECONDS,
+                            prefix
+                        )
+                     );
                 default:
                     throw new UnsupportedDataTypeException("The Sender Type is not supported. ");
             }
@@ -471,6 +520,7 @@ public class InfluxDbReporterFactory extends BaseReporterFactory {
             .filter(getFilter())
             .groupGauges(getGroupGauges())
             .withTags(getTags())
+            .tagsTransformer(tagsTransformer)
             .measurementMappings(buildMeasurementMappings());
     }
 }
